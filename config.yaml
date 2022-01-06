@@ -1,0 +1,14 @@
+ConcurrentChecks: 4
+PageTitle: Status Dashboard
+RetryDelay: 1s
+RetryAttempts: 2
+Timeout: 10s
+Targets:
+    - Category: external
+      DNSAddress: 1.1.1.1
+      ID: api.github.com
+      URL: https://api.github.com
+    - Category: public
+      DNSAddress: 1.1.1.1
+      ID: cloudflare
+      URL: https://one.one.one.one
