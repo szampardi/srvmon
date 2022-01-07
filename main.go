@@ -22,23 +22,24 @@ import (
 
 type (
 	configuration struct {
-		ConcurrentChecks int           `yaml:"ConcurrenctChecks,omitempty"`
-		Timeout          time.Duration `yaml:"Timeout,omitempty"`
-		RetryDelay       time.Duration `yaml:"RetryDelay,omitempty"`
-		RetryAttempts    int           `yaml:"RetryAttempts,omitempty"`
-		Alerts           string        `yaml:"Alerts,omitempty"`
-		PageTitle        string        `yaml:"PageTitle,omitempty"`
-		Targets          []Target      `yaml:"Targets,omitempty"`
+		ConcurrentChecks int           `json:"ConcurrenctChecks,omitempty" yaml:"ConcurrenctChecks,omitempty"`
+		Timeout          time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`
+		RetryDelay       time.Duration `json:"RetryDelay,omitempty" yaml:"RetryDelay,omitempty"`
+		RetryAttempts    int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
+		Alerts           string        `json:"Alerts,omitempty" yaml:"Alerts,omitempty"`
+		PageTitle        string        `json:"PageTitle,omitempty" yaml:"PageTitle,omitempty"`
+		Targets          []*Target     `json:"Targets,omitempty" yaml:"Targets,omitempty"`
 	}
 	Target struct {
-		ID                 string `yaml:"ID,omitempty"`
-		Category           string `yaml:"Category,omitempty"`
-		URL                string `yaml:"URL,omitempty"`
-		Method             string `yaml:"method,omitempty"`
-		ExpectedStatusCode int    `yaml:"statuscode,omitempty"`
-		RetryAttempts      int    `yaml:"RetryAttempts,omitempty"`
-		DNSAddress         string `yaml:"DNSAddress,omitempty"`
-		TLSSkipVerify      bool   `yaml:"TLSSkipVerify,omitempty"`
+		ID                 string        `json:"ID,omitempty" yaml:"ID,omitempty"`
+		Category           string        `json:"Category,omitempty" yaml:"Category,omitempty"`
+		URL                string        `json:"URL,omitempty" yaml:"URL,omitempty"`
+		Method             string        `json:"Method,omitempty" yaml:"Method,omitempty"`
+		ExpectedStatusCode int           `json:"StatusCode,omitempty" yaml:"StatuCcode,omitempty"`
+		Timeout            time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`
+		RetryAttempts      int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
+		DNSAddress         string        `json:"DNSAddress,omitempty" yaml:"DNSAddress,omitempty"`
+		TLSSkipVerify      bool          `json:"TLSSkipVerify,omitempty" yaml:"TLSSkipVerify,omitempty"`
 		clt                *http.Client
 	}
 )
@@ -59,7 +60,7 @@ var (
 )
 
 func init() {
-	temple.FnMap.Fn("checkAll", "", checkAll, false)
+	temple.FnMap.Fn("checkAll", "", check, false)
 	flag.Func(
 		"F",
 		fmt.Sprintf("logging format (prefix) %v", logFmts()),
@@ -158,7 +159,7 @@ func init() {
 				}
 			}
 		}
-		conf.Targets = append(conf.Targets, *tgt)
+		conf.Targets = append(conf.Targets, tgt)
 	}
 }
 
@@ -197,11 +198,11 @@ func main() {
 			l.Panic(err.Error())
 		}
 	case "YML", "YAML":
-		if err := yaml.NewEncoder(o).Encode(checkAll(conf.Targets)); err != nil {
+		if err := yaml.NewEncoder(o).Encode(check(conf.Targets)); err != nil {
 			l.Panic(err.Error())
 		}
 	case "JSON":
-		if err := json.NewEncoder(o).Encode(checkAll(conf.Targets)); err != nil {
+		if err := json.NewEncoder(o).Encode(check(conf.Targets)); err != nil {
 			l.Panic(err.Error())
 		}
 	}

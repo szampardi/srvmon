@@ -27,7 +27,7 @@ const (
          <div class=row>
             <div class=col>
                <p class=small>{{timestamp}}  
-                  <br>Total duration: {{.Duration}}
+                  <br>Total duration: {{.TotalDuration}}
                </p>
             </div>
          </div>
@@ -38,7 +38,7 @@ const (
 	successfulChecks string = `
          <div class=row>
             <div class=col>
-{{- range .Results}}{{- if eq .Error ""}}
+{{- range .Results}}{{- if not .Error}}
                <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Duration}})</font></a> &nbsp;
 {{- end}}{{- end}}
             </div>
