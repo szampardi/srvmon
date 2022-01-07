@@ -39,7 +39,7 @@ const (
          <div class=row>
             <div class=col>
 {{- range .Results}}{{- if not .Error}}
-               <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Duration}})</font></a> &nbsp;
+               <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Timings.Duration}})</font></a>
 {{- end}}{{- end}}
             </div>
          </div>

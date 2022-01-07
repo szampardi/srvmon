@@ -17,14 +17,20 @@ import (
 	"github.com/szampardi/hermes"
 )
 
-type Result struct {
-	*Target
-	httpResponse *http.Response `json:"-" yaml:"-"`
-	StatusCode   int            `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
-	StartTime    time.Time      `json:"StartTime,omitempty" yaml:"StartTime,omitempty"`
-	Duration     time.Duration  `json:"Duration,omitempty" yaml:"Duration,omitempty"`
-	Error        error          `json:"Error,omitempty" yaml:"Error,omitempty"`
-}
+type (
+	Timings struct {
+		Start    time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
+		End      time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
+		Duration time.Duration `json:"Duration,omitempty" yaml:"Duration,omitempty"`
+	}
+	Result struct {
+		*Target
+		httpResponse *http.Response `json:"-" yaml:"-"`
+		StatusCode   int            `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
+		Timings      Timings        `json:"Timings,omitempty" yaml:"Timings,omitempty"`
+		Error        error          `json:"Error,omitempty" yaml:"Error,omitempty"`
+	}
+)
 
 type output struct {
 	Results       map[string]*Result `json:"Results,omitempty" yaml:"Results,omitempty"`
@@ -50,7 +56,7 @@ func (t *Target) check() (Result, error) {
 		t.clt = httpClient(tmo, t.DNSAddress, t.TLSSkipVerify)
 	}
 	r := Result{Target: t}
-	r.StartTime = time.Now()
+	r.Timings.Start = time.Now()
 	ctr := 0
 attempt:
 	ctr++
@@ -69,7 +75,8 @@ attempt:
 		}
 		r.httpResponse, err = r.clt.Do(req)
 	}
-	r.Duration = time.Since(r.StartTime)
+	r.Timings.End = time.Now()
+	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
 	if r.httpResponse != nil {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
@@ -100,7 +107,7 @@ attempt:
 		}
 		return r, nil
 	}
-	l.Noticef("check for %s[%s] completed in %s", r.Category, r.ID, r.Duration)
+	l.Noticef("check for %s[%s] completed in %s", r.Category, r.ID, r.Timings.Duration)
 	return r, nil
 }
 
@@ -113,7 +120,7 @@ func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, 
 	if err == nil && y.Error != nil {
 		atomic.AddUint32(&R.Failures, 1)
 		// skip for malformed requests
-		if y.Duration > -1 && conf.Alerts != "" {
+		if y.Timings.Duration > -1 && conf.Alerts != "" {
 			awg.Add(1)
 			defer awg.Done()
 			l.Warningf("check for %s failed, sending alert..", tgt.ID)
