@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -49,6 +51,8 @@ var (
 	logcolor                         = flag.Bool("C", false, "colorize output")
 	conf                             = &configuration{}
 	dumpconf              bool
+	format                = flag.String("f", "html", "output format (html|yaml|json)")
+	outFile               = flag.String("o", os.Stdout.Name(), "output file")
 	confFile              string
 	showVersion           *bool = flag.Bool("V", false, "print build version/date and exit")
 	semver, commit, built       = "v0.0.0-dev", "local", "a while ago"
@@ -165,22 +169,42 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	tpl, _, err := temple.FnMap.BuildHTMLTemplate(
-		false,
-		conf.PageTitle,
-		"",
-		templates,
-	)
-	if err != nil {
-		l.Panic(err.Error())
+	var o io.Writer
+	switch *outFile {
+	case "1", "-", os.Stdout.Name():
+		o = os.Stdout
+	case "2", os.Stderr.Name():
+		o = os.Stderr
+	default:
+		o1, err := os.OpenFile(*outFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			l.Panic(err.Error())
+		}
+		o = io.MultiWriter(os.Stdout, o1)
 	}
-	if err := tpl.ExecuteTemplate(os.Stdout, "index", conf); err != nil {
-		l.Panic(err.Error())
+	switch strings.ToUpper(*format) {
+	case "HTML":
+		tpl, _, err := temple.FnMap.BuildHTMLTemplate(
+			false,
+			conf.PageTitle,
+			"",
+			templates,
+		)
+		if err != nil {
+			l.Panic(err.Error())
+		}
+		if err := tpl.ExecuteTemplate(o, "index", conf); err != nil {
+			l.Panic(err.Error())
+		}
+	case "YML", "YAML":
+		if err := yaml.NewEncoder(o).Encode(checkAll(conf.Targets)); err != nil {
+			l.Panic(err.Error())
+		}
+	case "JSON":
+		if err := json.NewEncoder(o).Encode(checkAll(conf.Targets)); err != nil {
+			l.Panic(err.Error())
+		}
 	}
-	/*	if err := yaml.NewEncoder(os.Stderr).Encode(checkAll(conf.Targets)); err != nil {
-		l.Panic(err.Error())
-	}*/
-
 }
 
 func logFmts() []string {
