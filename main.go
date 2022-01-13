@@ -33,8 +33,9 @@ type (
 	Target struct {
 		ID                 string        `json:"ID,omitempty" yaml:"ID,omitempty"`
 		Category           string        `json:"Category,omitempty" yaml:"Category,omitempty"`
-		URL                string        `json:"URL,omitempty" yaml:"URL,omitempty"`
 		Method             string        `json:"Method,omitempty" yaml:"Method,omitempty"`
+		URL                string        `json:"URL,omitempty" yaml:"URL,omitempty"`
+		Headers            []string      `json:"Headers,omitempty" yaml:"Headers,omitempty"`
 		ExpectedStatusCode int           `json:"StatusCode,omitempty" yaml:"StatuCcode,omitempty"`
 		Timeout            time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`
 		RetryAttempts      int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
@@ -52,7 +53,9 @@ var (
 	logcolor                         = flag.Bool("C", false, "colorize output")
 	conf                             = &configuration{}
 	dumpconf              bool
-	format                = flag.String("f", "html", "output format (html|yaml|json)")
+	format                = flag.String("f", "json", "output format (html|json|yaml)")
+	htmlTemplate          = flag.String("H", "index.html", "HTML template")
+	templates             = map[string]string{}
 	outFile               = flag.String("o", os.Stdout.Name(), "output file")
 	confFile              string
 	showVersion           *bool = flag.Bool("V", false, "print build version/date and exit")
@@ -60,7 +63,7 @@ var (
 )
 
 func init() {
-	temple.FnMap.Fn("checkAll", "", check, false)
+	temple.FnMap.Fn("check", "", check, false)
 	flag.Func(
 		"F",
 		fmt.Sprintf("logging format (prefix) %v", logFmts()),
@@ -113,13 +116,21 @@ func init() {
 	}
 
 	var err error
-
 	if err = log.IsValidLevel(int(loglvl)); err != nil {
 		panic(err)
 	}
 	l, err = log.New(logfmt.String(), log.Formats[log.DefTimeFmt].String(), loglvl, *logcolor, "srvmon", os.Stderr)
 	if err != nil {
 		panic(err)
+	}
+
+	htmlTpl, err := os.ReadFile(*htmlTemplate)
+	if err == nil {
+		l.Debugf("using %s as HTML template", *htmlTemplate)
+		templates["index"] = string(htmlTpl)
+	} else {
+		l.Debugf("%s", err)
+		templates["index"] = defaultIndex
 	}
 
 	if confFile != "" {
@@ -218,3 +229,74 @@ func logFmts() []string {
 	sort.Strings(out)
 	return out
 }
+
+var defaultIndex string = `{{$results := check .Targets .ConcurrentChecks}}
+<!doctype html>
+<html lang="en">
+   <style type="text/css">
+      body { background: black !important; }
+   </style>
+   <meta charset="utf-8">
+   <meta http-equiv="refresh" content="60">
+   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+   <title>{{.PageTitle}}</title>
+   <body>
+      <div class="container bg-dark text-white">
+         <div class=row> 
+            <div class=col>
+            <h1>{{.PageTitle}}</h1>
+            </div>
+         </div>
+         <div class=row>
+            <div class=col>
+			{{if ne $results.Failures 0}}
+			<div class="alert alert-danger" role="alert">
+			{{.Failures}} check(s) have failed.
+			</div>
+			<table class="table">
+			   <thead class="bg-dark text-white">
+				  <tr>
+					 <th>Category[ID]</th>
+					 <th>TotalAttemtps/Status/Expected</th>
+					 <th>Error</th>
+					 <th>Duration</th>
+				  </tr>
+			   </thead>
+			   <tbody>
+	  {{- range $results.Results}}
+	  {{- if .Error}}
+				  <tr class="table-danger">
+					 <td>{{.Target.Category}}[{{.Target.ID}}]</td>
+					 <td>{{- math .Target.RetryAttempts "+" 1 }} / {{- .StatusCode }} / {{.Target.ExpectedStatusCode}}</td>
+					 <td>{{.Error}}</td>
+					 <td>{{.Duration}}</td>
+				  </tr>
+	  {{- end}}
+	  {{- end}}
+			   </tbody>
+			</table>
+	  {{- else}}
+				  <div class="alert alert-success" role="alert">All is well, all {{len $results.Results}} services are up.</div>
+	  {{- end}}
+		 </div>
+	  </div>
+<div class=row>
+   <div class=col>
+{{- range $results.Results}}{{- if not .Error}}
+      <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Timings.Duration}})</font></a>
+{{- end}}{{- end}}
+   </div>
+</div>
+         <br>
+         <div class=row>
+            <div class=col>
+               <p class=small>{{timestamp}}
+                  <br>Total duration: {{$results.TotalDuration}}
+               </p>
+            </div>
+         </div>
+      </div>
+   </body>
+</html>
+`

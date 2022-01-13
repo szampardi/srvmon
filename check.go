@@ -27,7 +27,7 @@ type (
 		*Target
 		httpResponse *http.Response `json:"-" yaml:"-"`
 		StatusCode   int            `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
-		Timings      Timings        `json:"Timings,omitempty" yaml:"Timings,omitempty"`
+		Timings      *Timings       `json:"Timings,omitempty" yaml:"Timings,omitempty"`
 		Error        error          `json:"Error,omitempty" yaml:"Error,omitempty"`
 	}
 )
@@ -55,8 +55,12 @@ func (t *Target) check() (Result, error) {
 	if t.clt == nil {
 		t.clt = httpClient(tmo, t.DNSAddress, t.TLSSkipVerify)
 	}
-	r := Result{Target: t}
-	r.Timings.Start = time.Now()
+	r := Result{
+		Target: t,
+		Timings: &Timings{
+			Start: time.Now(),
+		},
+	}
 	ctr := 0
 attempt:
 	ctr++
