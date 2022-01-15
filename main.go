@@ -222,7 +222,7 @@ func main() {
 	go func() {
 	loop:
 		if conf.LoopDelay > 0 {
-			time.Sleep(conf.LoopDelay / 2)
+			time.Sleep(conf.LoopDelay)
 		}
 		newo := check(conf.Targets, conf.ConcurrentChecks)
 		asyncOutput.m.Lock()
@@ -255,7 +255,7 @@ func main() {
 				l.Panic(err.Error())
 			}
 		loop:
-			time.Sleep(conf.LoopDelay / 2)
+			time.Sleep(conf.LoopDelay + 1*time.Second)
 			b := new(bytes.Buffer)
 			asyncOutput.m.Lock()
 			if err := tpl.ExecuteTemplate(b, "index", struct {
@@ -386,7 +386,7 @@ func main() {
 		}
 		asyncOutput.m.Unlock()
 		if conf.LoopDelay > 0 {
-			time.Sleep(conf.LoopDelay)
+			time.Sleep(conf.LoopDelay + 1*time.Second)
 			goto wloop
 		}
 	}
@@ -472,4 +472,5 @@ var defaultIndex string = `
       </div>
    </body>
 </html>
+
 `
