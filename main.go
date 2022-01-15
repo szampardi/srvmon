@@ -443,7 +443,7 @@ var defaultIndex string = `
 					 <td>{{.Target.Category}}[{{.Target.ID}}]</td>
 					 <td>{{- math .Target.RetryAttempts "+" 1 }} / {{- .StatusCode }} / {{.Target.ExpectedStatusCode}}</td>
 					 <td>{{.Error}}</td>
-					 <td>{{.Duration}}</td>
+					 <td>{{.Timings.Duration}}</td>
 				  </tr>
 	  {{- end}}
 	  {{- end}}
