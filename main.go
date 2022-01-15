@@ -274,7 +274,7 @@ func main() {
 			goto loop
 		}()
 		mux := http.NewServeMux()
-		mux.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
+		indexFunc := func(rw http.ResponseWriter, r *http.Request) {
 			defer l.Noticef("%s (yaml) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
 			if r.Method != "GET" {
 				rw.WriteHeader(http.StatusMethodNotAllowed)
@@ -286,7 +286,9 @@ func main() {
 				l.Errorf("%s (/) error: %s", url.Scheme, err)
 			}
 			asyncHTMLOutput.m.Unlock()
-		})
+		}
+		mux.HandleFunc("/", indexFunc)
+		mux.HandleFunc("/html", indexFunc)
 		mux.HandleFunc("/json", func(rw http.ResponseWriter, r *http.Request) {
 			defer l.Noticef("%s (yaml) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
 			if r.Method != "GET" {
