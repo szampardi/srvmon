@@ -425,7 +425,7 @@ var defaultIndex string = `
             <div class=col>
 			{{if ne .Output.Failures 0}}
 			<div class="alert alert-danger" role="alert">
-			{{.Failures}} check(s) have failed.
+			{{.Output.Failures}} check(s) have failed.
 			</div>
 			<table class="table">
 			   <thead class="bg-dark text-white">
