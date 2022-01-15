@@ -255,7 +255,6 @@ func main() {
 				l.Panic(err.Error())
 			}
 		loop:
-			time.Sleep(conf.LoopDelay + 1*time.Second)
 			b := new(bytes.Buffer)
 			asyncOutput.m.Lock()
 			if err := tpl.ExecuteTemplate(b, "index", struct {
@@ -271,11 +270,12 @@ func main() {
 			asyncHTMLOutput.m.Lock()
 			asyncHTMLOutput.o = b
 			asyncHTMLOutput.m.Unlock()
+			time.Sleep(conf.LoopDelay + 1*time.Second)
 			goto loop
 		}()
 		mux := http.NewServeMux()
-		indexFunc := func(rw http.ResponseWriter, r *http.Request) {
-			defer l.Noticef("%s (yaml) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
+		mux.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
+			defer l.Noticef("%s (html) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
 			if r.Method != "GET" {
 				rw.WriteHeader(http.StatusMethodNotAllowed)
 				http.NotFound(rw, r)
@@ -286,11 +286,9 @@ func main() {
 				l.Errorf("%s (/) error: %s", url.Scheme, err)
 			}
 			asyncHTMLOutput.m.Unlock()
-		}
-		mux.HandleFunc("/", indexFunc)
-		mux.HandleFunc("/html", indexFunc)
+		})
 		mux.HandleFunc("/json", func(rw http.ResponseWriter, r *http.Request) {
-			defer l.Noticef("%s (yaml) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
+			defer l.Noticef("%s (json) server finished request %s %s", url.Scheme, r.RemoteAddr, r.Method)
 			if r.Method != "GET" {
 				rw.WriteHeader(http.StatusMethodNotAllowed)
 			}
