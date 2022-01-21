@@ -51,7 +51,7 @@ type (
 		RetryAttempts      int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
 		DNSAddress         string        `json:"DNSAddress,omitempty" yaml:"DNSAddress,omitempty"`
 		TLSSkipVerify      bool          `json:"TLSSkipVerify,omitempty" yaml:"TLSSkipVerify,omitempty"`
-		clt                *http.Client
+		httpClient         *http.Client
 	}
 )
 
@@ -168,9 +168,9 @@ func init() {
 		for i, p := range strings.Split(arg, ",") {
 			switch i {
 			case 0:
-				tgt.ID = p
-			case 1:
 				tgt.Category = p
+			case 1:
+				tgt.ID = p
 			case 2:
 				tgt.URL = p
 			case 3:
@@ -339,6 +339,40 @@ func main() {
 		}
 	} else {
 	wloop:
+		asyncOutput.m.Lock()
+		b := new(bytes.Buffer)
+		switch strings.ToUpper(*format) {
+		case "HTML":
+			tpl, _, err := temple.FnMap.BuildHTMLTemplate(
+				false,
+				conf.PageTitle,
+				"",
+				templates,
+			)
+			if err != nil {
+				l.Panic(err.Error())
+			}
+			if err := tpl.ExecuteTemplate(b, "index", struct {
+				Conf   *configuration
+				Output *output
+			}{
+				conf,
+				asyncOutput.o,
+			}); err != nil {
+				l.Panic(err.Error())
+			}
+		case "JSON":
+			if err := json.NewEncoder(b).Encode(asyncOutput.o); err != nil {
+				l.Panic(err.Error())
+			}
+		case "YML", "YAML":
+			fallthrough
+		default:
+			if err := yaml.NewEncoder(b).Encode(asyncOutput.o); err != nil {
+				l.Panic(err.Error())
+			}
+		}
+		asyncOutput.m.Unlock()
 		var o io.Writer
 		var err error
 		switch conf.Outfile {
@@ -352,39 +386,10 @@ func main() {
 				l.Panic(err.Error())
 			}
 		}
-		asyncOutput.m.Lock()
-		switch strings.ToUpper(*format) {
-		case "HTML":
-			tpl, _, err := temple.FnMap.BuildHTMLTemplate(
-				false,
-				conf.PageTitle,
-				"",
-				templates,
-			)
-			if err != nil {
-				l.Panic(err.Error())
-			}
-			if err := tpl.ExecuteTemplate(o, "index", struct {
-				Conf   *configuration
-				Output *output
-			}{
-				conf,
-				asyncOutput.o,
-			}); err != nil {
-				l.Panic(err.Error())
-			}
-		case "JSON":
-			if err := json.NewEncoder(o).Encode(asyncOutput.o); err != nil {
-				l.Panic(err.Error())
-			}
-		case "YML", "YAML":
-			fallthrough
-		default:
-			if err := yaml.NewEncoder(o).Encode(asyncOutput.o); err != nil {
-				l.Panic(err.Error())
-			}
+		_, err = io.Copy(o, b)
+		if err != nil {
+			l.Panic(err.Error())
 		}
-		asyncOutput.m.Unlock()
 		if conf.LoopDelay > 0 {
 			time.Sleep(conf.LoopDelay + 1*time.Second)
 			goto wloop

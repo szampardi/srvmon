@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,31 +21,31 @@ import (
 
 type (
 	Timings struct {
-		Start    time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
-		End      time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
-		Duration time.Duration `json:"Duration,omitempty" yaml:"Duration,omitempty"`
+		Start time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
+		End   time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
+		Last  time.Duration `json:"Duration,omitempty" yaml:"Duration,omitempty"`
+		Total time.Duration `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
 	}
 	Result struct {
 		*Target
 		httpResponse *http.Response `json:"-" yaml:"-"`
+		parsedURL    *url.URL       `json:"-" yaml:"-"`
 		StatusCode   int            `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
 		Timings      *Timings       `json:"Timings,omitempty" yaml:"Timings,omitempty"`
 		Error        error          `json:"Error,omitempty" yaml:"Error,omitempty"`
+		Attempts     uint32         `json:"Attempts" yaml:"Attempts"`
 	}
 )
 
 type output struct {
-	Results       map[string]*Result `json:"Results,omitempty" yaml:"Results,omitempty"`
-	TotalDuration time.Duration      `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
-	Failures      uint32             `json:"Failures,omitempty" yaml:"Failures,omitempty"`
+	Results       map[string]map[string]*Result `json:"Results,omitempty" yaml:"Results,omitempty"`
+	TotalDuration time.Duration                 `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
+	Failures      uint32                        `json:"Failures,omitempty" yaml:"Failures,omitempty"`
 }
 
 func (t *Target) check() (Result, error) {
 	if t.ExpectedStatusCode == 0 {
 		t.ExpectedStatusCode = 200
-	}
-	if t.Method == "" {
-		t.Method = http.MethodGet
 	}
 	if t.RetryAttempts == 0 {
 		t.RetryAttempts = conf.RetryAttempts
@@ -52,44 +54,98 @@ func (t *Target) check() (Result, error) {
 	if t.Timeout != 0 {
 		tmo = t.Timeout
 	}
-	if t.clt == nil {
-		t.clt = httpClient(tmo, t.DNSAddress, t.TLSSkipVerify)
-	}
+	start := time.Now()
 	r := Result{
 		Target: t,
 		Timings: &Timings{
-			Start: time.Now(),
+			Start: start,
 		},
 	}
-	ctr := 0
+	var err error
+	r.parsedURL, err = url.Parse(r.URL)
+	if err != nil {
+		return r, err
+	}
+	if r.Method == "" {
+		switch s := r.parsedURL.Scheme; {
+		case s == "" || strings.Contains(strings.ToLower(s), "http"):
+			r.Method = http.MethodGet
+		default:
+			r.Method = s
+		}
+	}
+	atomic.StoreUint32(&r.Attempts, 0)
 attempt:
-	ctr++
-	l.Debugf("starting check for %s[%s] (%d/%d)", r.Category, r.ID, ctr, r.RetryAttempts+1)
-	switch r.Method {
-	case http.MethodGet:
-		r.httpResponse, r.Error = r.clt.Get(r.URL)
-	case http.MethodHead:
-		r.httpResponse, r.Error = r.clt.Head(r.URL)
-	case http.MethodPost:
-		r.httpResponse, r.Error = r.clt.Post(r.URL, "", nil)
-	default:
-		req, err := http.NewRequest(r.Method, r.URL, nil)
-		if err != nil {
+	att := atomic.AddUint32(&r.Attempts, 1)
+	switch {
+	case strings.Contains(r.Method, "tcp") || strings.Contains(r.Method, "udp") || strings.Contains(r.Method, "ip") || strings.Contains(r.Method, "unix"):
+		if err := r.netCheck(tmo); err != nil {
 			return r, err
 		}
-		r.httpResponse, err = r.clt.Do(req)
+	default:
+		if err := r.httpCheck(tmo); err != nil {
+			return r, err
+		}
+	}
+	if r.Error != nil {
+		if (r.RetryAttempts > 0) && (int(att) <= r.RetryAttempts) {
+			l.Criticalf("check for %s[%s] failed, retrying (%d/%d) in %s", r.Category, r.ID, att, r.RetryAttempts, conf.RetryDelay)
+			time.Sleep(conf.RetryDelay)
+			goto attempt
+		}
+		return r, nil
+	}
+	l.Noticef("check for %s[%s] completed in %s (attempt %d/%d)", r.Category, r.ID, r.Timings.Total, att, r.RetryAttempts)
+	return r, nil
+}
+
+func (r *Result) netCheck(timeout time.Duration) error {
+	l.Debugf("starting %s check for %s[%s] (%d/%d)", r.Method, r.Category, r.ID, atomic.LoadUint32(&r.Attempts), r.RetryAttempts+1)
+	var c net.Conn
+	c, r.Error = net.DialTimeout(r.Method, r.parsedURL.Host, timeout)
+	r.Timings.End = time.Now()
+	r.Timings.Last = r.Timings.End.Sub(r.Timings.Start)
+	r.Timings.Total = r.Timings.Total + r.Timings.Last
+	if r.Error == nil {
+		r.StatusCode = 200
+		if c != nil {
+			return c.Close()
+		}
+	}
+	r.StatusCode = -1
+	return r.Error
+}
+
+func (r *Result) httpCheck(timeout time.Duration) error {
+	l.Debugf("starting http/s check for %s[%s] (%d/%d)", r.Category, r.ID, atomic.LoadUint32(&r.Attempts), r.RetryAttempts+1)
+	if r.Target.httpClient == nil {
+		r.Target.httpClient = httpClient(timeout, r.Target.DNSAddress, r.Target.TLSSkipVerify)
+	}
+	switch m := strings.ToUpper(r.Method); m {
+	case http.MethodGet:
+		r.httpResponse, r.Error = r.httpClient.Get(r.URL)
+	case http.MethodHead:
+		r.httpResponse, r.Error = r.httpClient.Head(r.URL)
+	case http.MethodPost:
+		r.httpResponse, r.Error = r.httpClient.Post(r.URL, "", nil)
+	default:
+		req, err := http.NewRequest(m, r.URL, nil)
+		if err != nil {
+			return err
+		}
+		r.httpResponse, r.Error = r.httpClient.Do(req)
 	}
 	r.Timings.End = time.Now()
-	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
+	r.Timings.Last = r.Timings.End.Sub(r.Timings.Start)
 	if r.httpResponse != nil {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
 	}
-	go r.clt.CloseIdleConnections()
+	go r.httpClient.CloseIdleConnections()
 	if r.httpResponse != nil && r.httpResponse.StatusCode != r.ExpectedStatusCode && r.Error == nil {
 		switch {
 		case r.httpResponse.StatusCode > 399 && r.httpResponse.StatusCode < 500:
-			ctr = r.RetryAttempts + 1
+			atomic.StoreUint32(&r.Attempts, uint32(r.RetryAttempts+1))
 			fallthrough
 			/*
 				buf := new(bytes.Buffer)
@@ -103,28 +159,19 @@ attempt:
 			r.Error = fmt.Errorf("status code %d does not match expected %d", r.StatusCode, r.ExpectedStatusCode)
 		}
 	}
-	if r.Error != nil {
-		if (r.RetryAttempts > 0) && (ctr <= r.RetryAttempts) {
-			l.Criticalf("check for %s[%s] failed, retrying (%d/%d) in %s", r.Category, r.ID, ctr, r.RetryAttempts, conf.RetryDelay)
-			time.Sleep(conf.RetryDelay)
-			goto attempt
-		}
-		return r, nil
-	}
-	l.Noticef("check for %s[%s] completed in %s", r.Category, r.ID, r.Timings.Duration)
-	return r, nil
+	return nil
 }
 
 func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, tgt *Target) {
 	y, err := tgt.check()
 	s.Lock()
-	R.Results[y.ID] = &y
+	R.Results[y.Category][y.ID] = &y
 	s.Unlock()
 	wg.Done()
 	if err == nil && y.Error != nil {
 		atomic.AddUint32(&R.Failures, 1)
 		// skip for malformed requests
-		if y.Timings.Duration > -1 && conf.Alerts != "" {
+		if y.Timings.Last > -1 && conf.Alerts != "" {
 			awg.Add(1)
 			defer awg.Done()
 			l.Warningf("check for %s failed, sending alert..", tgt.ID)
@@ -150,7 +197,7 @@ func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, 
 
 func check(ts []*Target, maxConcurrentRoutines ...int) *output {
 	o := new(output)
-	o.Results = make(map[string]*Result)
+	o.Results = make(map[string]map[string]*Result)
 	if len(ts) < 1 {
 		return o
 	}
@@ -168,6 +215,15 @@ func check(ts []*Target, maxConcurrentRoutines ...int) *output {
 			j = len(ts)
 		}
 		for _, tgt := range ts[i:j] {
+			if tgt.Category == "" {
+				tgt.Category = tgt.Method
+			}
+			if tgt.Category == "" {
+				tgt.Category = "uncategorized"
+			}
+			if _, ok := o.Results[tgt.Category]; !ok {
+				o.Results[tgt.Category] = make(map[string]*Result)
+			}
 			wg.Add(1)
 			go o.worker(s, wg, alertswg, tgt)
 		}
