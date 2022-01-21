@@ -133,7 +133,11 @@ func init() {
 	if err = log.IsValidLevel(int(loglvl)); err != nil {
 		panic(err)
 	}
-	l, err = log.New(logfmt.String(), log.Formats[log.DefTimeFmt].String(), loglvl, *logcolor, "srvmon", os.Stderr)
+	me, err := os.Executable()
+	if err != nil {
+		me = "srvmon"
+	}
+	l, err = log.New(logfmt.String(), log.Formats[log.DefTimeFmt].String(), loglvl, *logcolor, me, os.Stderr)
 	if err != nil {
 		panic(err)
 	}
@@ -338,6 +342,19 @@ func main() {
 			}
 		}
 	} else {
+		var o io.Writer
+		var err error
+		switch conf.Outfile {
+		case "1", "-", os.Stdout.Name():
+			o = os.Stdout
+		case "2", os.Stderr.Name():
+			o = os.Stderr
+		default:
+			o, err = os.OpenFile(conf.Outfile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+			if err != nil {
+				l.Panic(err.Error())
+			}
+		}
 	wloop:
 		asyncOutput.m.Lock()
 		b := new(bytes.Buffer)
@@ -373,19 +390,6 @@ func main() {
 			}
 		}
 		asyncOutput.m.Unlock()
-		var o io.Writer
-		var err error
-		switch conf.Outfile {
-		case "1", "-", os.Stdout.Name():
-			o = os.Stdout
-		case "2", os.Stderr.Name():
-			o = os.Stderr
-		default:
-			o, err = os.OpenFile(conf.Outfile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-			if err != nil {
-				l.Panic(err.Error())
-			}
-		}
 		_, err = io.Copy(o, b)
 		if err != nil {
 			l.Panic(err.Error())
