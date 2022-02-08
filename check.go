@@ -21,10 +21,10 @@ import (
 
 type (
 	Timings struct {
-		Start time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
-		End   time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
-		Last  time.Duration `json:"Duration,omitempty" yaml:"Duration,omitempty"`
-		Total time.Duration `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
+		Start         time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
+		End           time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
+		Duration      time.Duration `json:"Duration,omitempty" yaml:"Duration,omitempty"`
+		TotalDuration time.Duration `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
 	}
 	Result struct {
 		*Target
@@ -38,9 +38,9 @@ type (
 )
 
 type output struct {
-	Results       map[string]map[string]*Result `json:"Results,omitempty" yaml:"Results,omitempty"`
-	TotalDuration time.Duration                 `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
-	Failures      uint32                        `json:"Failures,omitempty" yaml:"Failures,omitempty"`
+	Results       map[string]*Result `json:"Results,omitempty" yaml:"Results,omitempty"`
+	TotalDuration time.Duration      `json:"TotalDuration,omitempty" yaml:"TotalDuration,omitempty"`
+	Failures      uint32             `json:"Failures,omitempty" yaml:"Failures,omitempty"`
 }
 
 func (t *Target) check() (Result, error) {
@@ -95,7 +95,7 @@ attempt:
 		}
 		return r, nil
 	}
-	l.Noticef("check for %s[%s] completed in %s (attempt %d/%d)", r.Category, r.ID, r.Timings.Total, att, r.RetryAttempts)
+	l.Noticef("check for %s[%s] completed in %s (attempt %d/%d)", r.Category, r.ID, r.Timings.TotalDuration, att, r.RetryAttempts)
 	return r, nil
 }
 
@@ -104,8 +104,8 @@ func (r *Result) netCheck(timeout time.Duration) error {
 	var c net.Conn
 	c, r.Error = net.DialTimeout(r.Method, r.parsedURL.Host, timeout)
 	r.Timings.End = time.Now()
-	r.Timings.Last = r.Timings.End.Sub(r.Timings.Start)
-	r.Timings.Total = r.Timings.Total + r.Timings.Last
+	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
+	r.Timings.TotalDuration = r.Timings.TotalDuration + r.Timings.Duration
 	if r.Error == nil {
 		r.StatusCode = 200
 		if c != nil {
@@ -136,7 +136,7 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 		r.httpResponse, r.Error = r.httpClient.Do(req)
 	}
 	r.Timings.End = time.Now()
-	r.Timings.Last = r.Timings.End.Sub(r.Timings.Start)
+	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
 	if r.httpResponse != nil {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
@@ -165,13 +165,13 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, tgt *Target) {
 	y, err := tgt.check()
 	s.Lock()
-	R.Results[y.Category][y.ID] = &y
+	R.Results[y.ID] = &y
 	s.Unlock()
 	wg.Done()
 	if err == nil && y.Error != nil {
 		atomic.AddUint32(&R.Failures, 1)
 		// skip for malformed requests
-		if y.Timings.Last > -1 && conf.Alerts != "" {
+		if y.Timings.Duration > -1 && conf.Alerts != "" {
 			awg.Add(1)
 			defer awg.Done()
 			l.Warningf("check for %s failed, sending alert..", tgt.ID)
@@ -197,7 +197,7 @@ func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, 
 
 func check(ts []*Target, maxConcurrentRoutines ...int) *output {
 	o := new(output)
-	o.Results = make(map[string]map[string]*Result)
+	o.Results = make(map[string]*Result)
 	if len(ts) < 1 {
 		return o
 	}
@@ -220,9 +220,6 @@ func check(ts []*Target, maxConcurrentRoutines ...int) *output {
 			}
 			if tgt.Category == "" {
 				tgt.Category = "uncategorized"
-			}
-			if _, ok := o.Results[tgt.Category]; !ok {
-				o.Results[tgt.Category] = make(map[string]*Result)
 			}
 			wg.Add(1)
 			go o.worker(s, wg, alertswg, tgt)
