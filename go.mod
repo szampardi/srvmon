@@ -1,4 +1,4 @@
-module vcs.opsz.net/go/srvmon
+module github.com/szampardi/srvmon
 
 go 1.17
 
