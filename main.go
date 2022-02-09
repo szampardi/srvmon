@@ -462,7 +462,7 @@ var defaultIndex string = `
 <div class=row>
    <div class=col>
 {{- range .Output.Results}}{{- if not .Error}}
-      <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Timings.Last}})</font></a>
+      <a href="#" class="btn btn-success disabled" tabindex="-1" role="button" aria-disabled="true" style="margin-top: 10px; padding: 10px;">{{.Target.Category}}[{{.Target.ID}}]<font color=LightGray>({{.Timings.Duration}})</font></a>
 {{- end}}{{- end}}
    </div>
 </div>
