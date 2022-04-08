@@ -155,17 +155,17 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 		}
 		r.httpResponse, r.Error = r.Target.httpClient.Do(req)
 	}
-	if r.httpResponse.TLS != nil {
-		r.TLS = &TLS{
-			Issuer:   r.httpResponse.TLS.PeerCertificates[0].Issuer,
-			NotAfter: r.httpResponse.TLS.PeerCertificates[0].NotAfter,
-		}
-	}
 	r.Timings.End = time.Now()
 	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
 	if r.httpResponse != nil {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
+		if r.httpResponse.TLS != nil {
+			r.TLS = &TLS{
+				Issuer:   r.httpResponse.TLS.PeerCertificates[0].Issuer,
+				NotAfter: r.httpResponse.TLS.PeerCertificates[0].NotAfter,
+			}
+		}
 	}
 	go r.httpClient.CloseIdleConnections()
 	if r.httpResponse != nil && r.httpResponse.StatusCode != r.ExpectedStatusCode && r.Error == nil {
@@ -197,7 +197,7 @@ func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, 
 	if err == nil && y.Error != nil {
 		atomic.AddUint32(&R.Failures, 1)
 		// skip for malformed requests
-		if y.Timings.Duration > -1 && conf.Alerts != "" {
+		if (y.Timings.Duration > -1 || (y.TLS != nil && y.TLS.Expiring)) && conf.Alerts != "" {
 			awg.Add(1)
 			defer awg.Done()
 			l.Warningf("check for %s failed, sending alert..", tgt.ID)
