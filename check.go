@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -20,6 +21,11 @@ import (
 )
 
 type (
+	TLS struct {
+		Issuer   pkix.Name
+		NotAfter time.Time
+		Expiring bool
+	}
 	Timings struct {
 		Start         time.Time     `json:"Start,omitempty" yaml:"Start,omitempty"`
 		End           time.Time     `json:"End,omitempty" yaml:"End,omitempty"`
@@ -32,6 +38,7 @@ type (
 		parsedURL    *url.URL       `json:"-" yaml:"-"`
 		StatusCode   int            `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
 		Timings      *Timings       `json:"Timings,omitempty" yaml:"Timings,omitempty"`
+		TLS          *TLS           `json:"TLS,omitempty" yaml:"TLS,omitempty"`
 		Error        error          `json:"Error,omitempty" yaml:"Error,omitempty"`
 		Attempts     uint32         `json:"Attempts" yaml:"Attempts"`
 	}
@@ -43,7 +50,7 @@ type output struct {
 	Failures      uint32             `json:"Failures,omitempty" yaml:"Failures,omitempty"`
 }
 
-func (t *Target) check() (Result, error) {
+func (t *Target) check(tlsExpThreshold time.Duration) (Result, error) {
 	if t.ExpectedStatusCode == 0 {
 		t.ExpectedStatusCode = 200
 	}
@@ -87,6 +94,12 @@ attempt:
 			return r, err
 		}
 	}
+	if tlsExpThreshold != 0 && r.TLS != nil && time.Now().Add(tlsExpThreshold).After(r.TLS.NotAfter) {
+		r.TLS.Expiring = true
+		r.Error = fmt.Errorf("cert (issuer: %v) expires in t < %s: %s", r.TLS.Issuer, tlsExpThreshold, r.TLS.NotAfter.Format(time.RFC3339))
+		l.Warningf("check for %s[%s] will fail soon: %s", r.Category, r.ID, r.Error)
+		return r, nil
+	}
 	if r.Error != nil {
 		if (r.RetryAttempts > 0) && (int(att) <= r.RetryAttempts) {
 			l.Criticalf("check for %s[%s] failed, retrying (%d/%d) in %s", r.Category, r.ID, att, r.RetryAttempts, conf.RetryDelay)
@@ -106,6 +119,13 @@ func (r *Result) netCheck(timeout time.Duration) error {
 	r.Timings.End = time.Now()
 	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
 	r.Timings.TotalDuration = r.Timings.TotalDuration + r.Timings.Duration
+	if tlsC, ok := c.(*tls.Conn); ok {
+		crt0 := tlsC.ConnectionState().PeerCertificates[0]
+		r.TLS = &TLS{
+			Issuer:   crt0.Issuer,
+			NotAfter: crt0.NotAfter,
+		}
+	}
 	if r.Error == nil {
 		r.StatusCode = 200
 		if c != nil {
@@ -123,17 +143,23 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 	}
 	switch m := strings.ToUpper(r.Method); m {
 	case http.MethodGet:
-		r.httpResponse, r.Error = r.httpClient.Get(r.URL)
+		r.httpResponse, r.Error = r.Target.httpClient.Get(r.URL)
 	case http.MethodHead:
-		r.httpResponse, r.Error = r.httpClient.Head(r.URL)
+		r.httpResponse, r.Error = r.Target.httpClient.Head(r.URL)
 	case http.MethodPost:
-		r.httpResponse, r.Error = r.httpClient.Post(r.URL, "", nil)
+		r.httpResponse, r.Error = r.Target.httpClient.Post(r.URL, "", nil)
 	default:
 		req, err := http.NewRequest(m, r.URL, nil)
 		if err != nil {
 			return err
 		}
-		r.httpResponse, r.Error = r.httpClient.Do(req)
+		r.httpResponse, r.Error = r.Target.httpClient.Do(req)
+	}
+	if r.httpResponse.TLS != nil {
+		r.TLS = &TLS{
+			Issuer:   r.httpResponse.TLS.PeerCertificates[0].Issuer,
+			NotAfter: r.httpResponse.TLS.PeerCertificates[0].NotAfter,
+		}
 	}
 	r.Timings.End = time.Now()
 	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
@@ -162,8 +188,8 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 	return nil
 }
 
-func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, tgt *Target) {
-	y, err := tgt.check()
+func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, tgt *Target, tlsExpThreshold time.Duration) {
+	y, err := tgt.check(tlsExpThreshold)
 	s.Lock()
 	R.Results[y.ID] = &y
 	s.Unlock()
@@ -195,7 +221,7 @@ func (R *output) worker(s *sync.Mutex, wg *sync.WaitGroup, awg *sync.WaitGroup, 
 	}
 }
 
-func check(ts []*Target, maxConcurrentRoutines ...int) *output {
+func check(ts []*Target, tlsExpThreshold time.Duration, maxConcurrentRoutines ...int) *output {
 	o := new(output)
 	o.Results = make(map[string]*Result)
 	if len(ts) < 1 {
@@ -222,7 +248,7 @@ func check(ts []*Target, maxConcurrentRoutines ...int) *output {
 				tgt.Category = "uncategorized"
 			}
 			wg.Add(1)
-			go o.worker(s, wg, alertswg, tgt)
+			go o.worker(s, wg, alertswg, tgt, tlsExpThreshold)
 		}
 		wg.Wait()
 	}

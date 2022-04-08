@@ -27,18 +27,19 @@ import (
 
 type (
 	configuration struct {
-		Outfile          string        `json:"Outfile,omitempty" yaml:"Outfile,omitempty"`
-		ConcurrentChecks int           `json:"ConcurrenctChecks,omitempty" yaml:"ConcurrenctChecks,omitempty"`
-		Timeout          time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`
-		LoopDelay        time.Duration `json:"LoopDelay,omitempty" yaml:"LoopDelay,omitempty"`
-		RetryDelay       time.Duration `json:"RetryDelay,omitempty" yaml:"RetryDelay,omitempty"`
-		RetryAttempts    int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
-		Alerts           string        `json:"Alerts,omitempty" yaml:"Alerts,omitempty"`
-		PageTitle        string        `json:"PageTitle,omitempty" yaml:"PageTitle,omitempty"`
-		ListenAddr       string        `json:"ListenAddr,omitempty" yaml:"ListenAddr,omitempty"`
-		TLSCertFile      string        `json:"TLSCertFile,omitempty" yaml:"TLSCertFile,omitempty"`
-		TLSKeyFile       string        `json:"TLSKeyFile,omitempty" yaml:"TLSKeyFile,omitempty"`
-		Targets          []*Target     `json:"Targets,omitempty" yaml:"Targets,omitempty"`
+		Outfile                    string        `json:"Outfile,omitempty" yaml:"Outfile,omitempty"`
+		ConcurrentChecks           int           `json:"ConcurrenctChecks,omitempty" yaml:"ConcurrenctChecks,omitempty"`
+		TLSCertExpirationThreshold time.Duration `json:"TLSCertExpirationThreshold,omitempty" yaml:"TLSCertExpirationThreshold,omitempty"`
+		Timeout                    time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`
+		LoopDelay                  time.Duration `json:"LoopDelay,omitempty" yaml:"LoopDelay,omitempty"`
+		RetryDelay                 time.Duration `json:"RetryDelay,omitempty" yaml:"RetryDelay,omitempty"`
+		RetryAttempts              int           `json:"RetryAttempts,omitempty" yaml:"RetryAttempts,omitempty"`
+		Alerts                     string        `json:"Alerts,omitempty" yaml:"Alerts,omitempty"`
+		PageTitle                  string        `json:"PageTitle,omitempty" yaml:"PageTitle,omitempty"`
+		ListenAddr                 string        `json:"ListenAddr,omitempty" yaml:"ListenAddr,omitempty"`
+		TLSCertFile                string        `json:"TLSCertFile,omitempty" yaml:"TLSCertFile,omitempty"`
+		TLSKeyFile                 string        `json:"TLSKeyFile,omitempty" yaml:"TLSKeyFile,omitempty"`
+		Targets                    []*Target     `json:"Targets,omitempty" yaml:"Targets,omitempty"`
 	}
 	Target struct {
 		ID                 string        `json:"ID,omitempty" yaml:"ID,omitempty"`
@@ -220,7 +221,7 @@ func main() {
 		o *output
 		m *sync.Mutex
 	}{
-		check(conf.Targets, conf.ConcurrentChecks),
+		check(conf.Targets, conf.TLSCertExpirationThreshold, conf.ConcurrentChecks),
 		&sync.Mutex{},
 	}
 	go func() {
@@ -228,7 +229,7 @@ func main() {
 		if conf.LoopDelay > 0 {
 			time.Sleep(conf.LoopDelay)
 		}
-		newo := check(conf.Targets, conf.ConcurrentChecks)
+		newo := check(conf.Targets, conf.TLSCertExpirationThreshold, conf.ConcurrentChecks)
 		asyncOutput.m.Lock()
 		asyncOutput.o = newo
 		asyncOutput.m.Unlock()

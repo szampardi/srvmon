@@ -1,4 +1,5 @@
 ConcurrentChecks: 4
+TLSCertExpirationThreshold: 168h
 PageTitle: Status Dashboard
 RetryDelay: 1s
 RetryAttempts: 2
