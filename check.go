@@ -102,13 +102,13 @@ attempt:
 	}
 	if r.Error != nil {
 		if (r.RetryAttempts > 0) && (int(att) <= r.RetryAttempts) {
-			l.Criticalf("check for %s[%s] failed, retrying (%d/%d) in %s", r.Category, r.ID, att, r.RetryAttempts, conf.RetryDelay)
+			l.Criticalf("check for %s[%s] failed after %s, retrying (%d/%d) in %s", r.Category, r.ID, r.Timings.TotalDuration, att, r.RetryAttempts, conf.RetryDelay)
 			time.Sleep(conf.RetryDelay)
 			goto attempt
 		}
 		return r, nil
 	}
-	l.Noticef("check for %s[%s] completed in %s (attempt %d/%d)", r.Category, r.ID, r.Timings.TotalDuration, att, r.RetryAttempts)
+	l.Noticef("check for %s[%s] completed in %s (attempt %d/%d)", r.Category, r.ID, r.Timings.TotalDuration, att, r.RetryAttempts+1)
 	return r, nil
 }
 
@@ -157,6 +157,7 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 	}
 	r.Timings.End = time.Now()
 	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
+	r.Timings.TotalDuration = r.Timings.TotalDuration + r.Timings.Duration
 	if r.httpResponse != nil {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
