@@ -45,7 +45,9 @@ type (
 		ID                 string        `json:"ID,omitempty" yaml:"ID,omitempty"`
 		Category           string        `json:"Category,omitempty" yaml:"Category,omitempty"`
 		Method             string        `json:"Method,omitempty" yaml:"Method,omitempty"`
+		Body               interface{}   `json:"Body,omitempty" yaml:"Body,omitempty"`
 		URL                string        `json:"URL,omitempty" yaml:"URL,omitempty"`
+		IPPort             string        `json:"IPPort,omitempty" yaml:"IPPort,omitempty"`
 		Headers            []string      `json:"Headers,omitempty" yaml:"Headers,omitempty"`
 		ExpectedStatusCode int           `json:"StatusCode,omitempty" yaml:"StatusCode,omitempty"`
 		Timeout            time.Duration `json:"Timeout,omitempty" yaml:"Timeout,omitempty"`

@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -112,6 +113,27 @@ attempt:
 	return r, nil
 }
 
+func (r *Result) reqBody() io.Reader {
+	switch t := r.Body.(type) {
+	case io.Reader:
+		return t
+	case []byte:
+		return bytes.NewBuffer(t)
+	case string:
+		return bytes.NewBuffer([]byte(t))
+	default:
+		return nil
+	}
+}
+
+func (r *Result) parseTLSCerts(cstate tls.ConnectionState) {
+	crt := cstate.PeerCertificates[0]
+	r.TLS = &TLS{
+		Issuer:   crt.Issuer,
+		NotAfter: crt.NotAfter,
+	}
+}
+
 func (r *Result) netCheck(timeout time.Duration) error {
 	l.Debugf("starting %s check for %s[%s] (%d/%d)", r.Method, r.Category, r.ID, atomic.LoadUint32(&r.Attempts), r.RetryAttempts+1)
 	var c net.Conn
@@ -120,26 +142,27 @@ func (r *Result) netCheck(timeout time.Duration) error {
 	r.Timings.Duration = r.Timings.End.Sub(r.Timings.Start)
 	r.Timings.TotalDuration = r.Timings.TotalDuration + r.Timings.Duration
 	if tlsC, ok := c.(*tls.Conn); ok {
-		crt0 := tlsC.ConnectionState().PeerCertificates[0]
-		r.TLS = &TLS{
-			Issuer:   crt0.Issuer,
-			NotAfter: crt0.NotAfter,
+		r.parseTLSCerts(tlsC.ConnectionState())
+	}
+	if r.Error != nil {
+		r.StatusCode = -1
+		return r.Error
+	}
+	r.StatusCode = 200
+	rb := r.reqBody()
+	if rb != nil {
+		if _, r.Error = io.Copy(c, rb); r.Error != nil {
+			r.StatusCode = -2
+			return r.Error
 		}
 	}
-	if r.Error == nil {
-		r.StatusCode = 200
-		if c != nil {
-			return c.Close()
-		}
-	}
-	r.StatusCode = -1
-	return r.Error
+	return c.Close()
 }
 
 func (r *Result) httpCheck(timeout time.Duration) error {
 	l.Debugf("starting http/s check for %s[%s] (%d/%d)", r.Category, r.ID, atomic.LoadUint32(&r.Attempts), r.RetryAttempts+1)
 	if r.Target.httpClient == nil {
-		r.Target.httpClient = httpClient(timeout, r.Target.DNSAddress, r.Target.TLSSkipVerify)
+		r.Target.httpClient = r.mkHTTPClient(timeout)
 	}
 	switch m := strings.ToUpper(r.Method); m {
 	case http.MethodGet:
@@ -147,9 +170,9 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 	case http.MethodHead:
 		r.httpResponse, r.Error = r.Target.httpClient.Head(r.URL)
 	case http.MethodPost:
-		r.httpResponse, r.Error = r.Target.httpClient.Post(r.URL, "", nil)
+		r.httpResponse, r.Error = r.Target.httpClient.Post(r.URL, "", r.reqBody())
 	default:
-		req, err := http.NewRequest(m, r.URL, nil)
+		req, err := http.NewRequest(m, r.URL, r.reqBody())
 		if err != nil {
 			return err
 		}
@@ -162,10 +185,7 @@ func (r *Result) httpCheck(timeout time.Duration) error {
 		r.StatusCode = r.httpResponse.StatusCode
 		defer r.httpResponse.Body.Close()
 		if r.httpResponse.TLS != nil {
-			r.TLS = &TLS{
-				Issuer:   r.httpResponse.TLS.PeerCertificates[0].Issuer,
-				NotAfter: r.httpResponse.TLS.PeerCertificates[0].NotAfter,
-			}
+			r.parseTLSCerts(*r.httpResponse.TLS)
 		}
 	}
 	go r.httpClient.CloseIdleConnections()
@@ -274,48 +294,40 @@ func netResolver(network, address string, timeout time.Duration) *net.Resolver {
 	}
 }
 
-func httpClient(timeout time.Duration, DNSAddress string, TLSSkipVerify bool) *http.Client {
-	tlscfg := &tls.Config{
-		Rand:               rand.Reader,
-		InsecureSkipVerify: TLSSkipVerify,
-		MinVersion:         tls.VersionTLS12,
-		CurvePreferences:   []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+func (r *Result) mkHTTPClient(timeout time.Duration) *http.Client {
+	h := &http.Client{
+		Timeout: timeout,
+	}
+	tx := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			Rand:               rand.Reader,
+			InsecureSkipVerify: r.TLSSkipVerify,
+			MinVersion:         tls.VersionTLS12,
+			CurvePreferences:   []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			},
 		},
+		//MaxConnsPerHost:     4,
+		//MaxIdleConnsPerHost: 0,
+		//	TLSHandshakeTimeout:   10 * time.Second,
+		//	ResponseHeaderTimeout: 10 * time.Second,
+		//	ExpectContinueTimeout: 1 * time.Second,
 	}
-	var h *http.Client
-	if DNSAddress == "" {
-		h = &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				TLSClientConfig: tlscfg,
-				//MaxConnsPerHost:     4,
-				//MaxIdleConnsPerHost: 0,
-				//	TLSHandshakeTimeout:   10 * time.Second,
-				//	ResponseHeaderTimeout: 10 * time.Second,
-				//	ExpectContinueTimeout: 1 * time.Second,
-			},
+	if r.DNSAddress != "" || r.IPPort != "" {
+		dcFunc := func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialer := new(net.Dialer)
+			if r.IPPort != "" {
+				return dialer.DialContext(ctx, network, r.IPPort)
+			}
+			if r.DNSAddress != "" {
+				dialer = &net.Dialer{Resolver: netResolver(network, r.DNSAddress, timeout/2)}
+			}
+			return dialer.DialContext(ctx, network, address)
 		}
-	} else {
-		h = &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				TLSClientConfig: tlscfg,
-				//MaxConnsPerHost:     4,
-				//MaxIdleConnsPerHost: 0,
-				//	TLSHandshakeTimeout:   10 * time.Second,
-				//	ResponseHeaderTimeout: 10 * time.Second,
-				//	ExpectContinueTimeout: 1 * time.Second,
-				DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-					dialer := &net.Dialer{
-						Resolver: netResolver(network, DNSAddress, timeout/2),
-					}
-					return dialer.DialContext(ctx, network, address)
-				},
-			},
-		}
+		tx.DialContext = dcFunc
 	}
+	h.Transport = tx
 	return h
 }
